@@ -1,73 +1,81 @@
-'use strict';
-import path from 'path'
-import { readFile } from 'fs/promises'
-import { fileURLToPath } from 'url';
+import yargs from 'yargs';
+import { promises as fs } from 'fs';
+import { format } from 'date-fns';
 
-import yargs from 'yargs'
-import chalk from 'chalk'
+class CNABProcessor {
+  constructor(options) {
+    this.options = options;
+  }
 
-const optionsYargs = yargs(process.argv.slice(2))
+  async process() {
+    try {
+      const fileContent = await this.readFile();
+      const cnabArray = fileContent.split('\n');
+      const foundCompanies = this.processCNABData(cnabArray);
+      this.printResult(foundCompanies);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async readFile() {
+    const { file } = this.options;
+    return fs.readFile(file, 'utf8');
+  }
+
+  processCNABData(cnabArray) {
+    const { nome } = this.options;
+    const dataHora = format(new Date(), 'dd/MM/yyyy, HH:mm:ss a');
+
+    const foundCompanies = cnabArray.reduce((companies, segment, index) => {
+      if (segment.includes(nome)) {
+        const company = this.processCompanySegment(segment, index, dataHora);
+        companies.push(company);
+      }
+      return companies;
+    }, []);
+
+    return foundCompanies;
+  }
+
+  processCompanySegment(segment, index, dataHora) {
+    const { nome } = this.options;
+    const primeiros13Caracteres = segment.substring(0, 14);
+    const parts = segment.split(',');
+    const dadosAposAVirgula = parts[1];
+
+    return {
+      segment: primeiros13Caracteres,
+      nome,
+      position: index + 1,
+      date: dataHora,
+      endereco: dadosAposAVirgula,
+    };
+  }
+
+  printResult(foundCompanies) {
+    if (foundCompanies.length > 0) {
+      const result = {
+        empresas: foundCompanies,
+      };
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Nome da empresa '${this.options.nome}' não encontrado.`);
+    }
+  }
+}
+
+const options = yargs(process.argv.slice(2))
   .usage('Uso: $0 [options]')
-  .option("f", { alias: "from", describe: "posição inicial de pesquisa da linha do Cnab", type: "number", demandOption: true })
-  .option("t", { alias: "to", describe: "posição final de pesquisa da linha do Cnab", type: "number", demandOption: true })
-  .option("s", { alias: "segmento", describe: "tipo de segmento", type: "string", demandOption: true })
+  .option('f', { alias: 'from', describe: 'posição inicial de pesquisa da linha do Cnab', type: 'number', demandOption: true })
+  .option('t', { alias: 'to', describe: 'posição final de pesquisa da linha do Cnab', type: 'number', demandOption: true })
+  .option('s', { alias: 'segmento', describe: 'tipo de segmento', type: 'string', demandOption: true })
+  .option('n', { alias: 'nome', describe: 'nome da empresa', type: 'string' })
+  .option('file', { describe: 'arquivo CNAB', type: 'string', demandOption: true })
   .example('$0 -f 21 -t 34 -s p', 'lista a linha e campo que from e to do cnab')
+  .example('$0 -f 21 -t 34 -s p -n "Nome da Empresa"', 'pesquisa por nome da empresa')
+  .example('$0 -f 21 -t 34 -s p -n "Nome da Empresa" --file "caminho/do/seu/arquivo.cnab"', 'especifica o arquivo CNAB')
   .argv;
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const file = path.resolve(`${__dirname}/cnabExample.rem`)
-
-const { from, to, segmento } = optionsYargs
-
-const sliceArrayPosition = (arr, ...positions) => [...arr].slice(...positions)
-
-const messageLog = (segmento, segmentoType, from, to) => `
------ Cnab linha ${segmentoType} -----
-
-posição from: ${chalk.inverse.bgBlack(from)}
-
-posição to: ${chalk.inverse.bgBlack(to)}
-
-item isolado: ${chalk.inverse.bgBlack(segmento.substring(from - 1, to))}
-
-item dentro da linha P: 
-  ${segmento.substring(0, from)}${chalk.inverse.bgBlack(segmento.substring(from - 1, to))}${segmento.substring(to)}
-
------ FIM ------
-`
-
-const log = console.log
-
-console.time('leitura Async')
-
-readFile(file, 'utf8')
-  .then(file => {
-    const cnabArray = file.split('\n')
-
-    const cnabHeader = sliceArrayPosition(cnabArray, 0, 2)
-
-    const [cnabBodySegmentoP, cnabBodySegmentoQ, cnabBodySegmentoR] = sliceArrayPosition(cnabArray, 2, -2)
-
-    const cnabTail = sliceArrayPosition(cnabArray, -2)
-
-    if (segmento === 'p') {
-      log(messageLog(cnabBodySegmentoP, 'P', from, to))
-      return
-    }
-
-    if (segmento === 'q') {
-      log(messageLog(cnabBodySegmentoQ, 'Q', from, to))
-      return
-    }
-
-    if (segmento === 'r') {
-      log(messageLog(cnabBodySegmentoR, 'R', from, to))
-      return
-    }
-
-  })
-  .catch(error => {
-    console.log("🚀 ~ file: cnabRows.js ~ line 76 ~ error", error)
-  })
-console.timeEnd('leitura Async')
+const processor = new CNABProcessor(options);
+processor.process();
